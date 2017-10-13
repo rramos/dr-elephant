@@ -48,5 +48,7 @@ target
 logs
 RUNNING_PID
 
+dr-elephant-2.0.3-SNAPSHOT
 
+*.zip
 *.jar
