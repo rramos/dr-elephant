@@ -48,6 +48,13 @@ public class MapperSpeedHeuristic implements Heuristic<MapReduceApplicationData>
   private double[] diskSpeedLimits = {1d/2, 1d/4, 1d/8, 1d/32};  // Fraction of HDFS block size
   private double[] runtimeLimits = {5, 10, 15, 30};              // The Map task runtime in milli sec
 
+  private List<MapReduceCounterData.CounterName> _counterNames = Arrays.asList(
+      MapReduceCounterData.CounterName.HDFS_BYTES_READ,
+      MapReduceCounterData.CounterName.S3_BYTES_READ,
+      MapReduceCounterData.CounterName.S3A_BYTES_READ,
+      MapReduceCounterData.CounterName.S3N_BYTES_READ
+  );
+
   private HeuristicConfigurationData _heuristicConfData;
 
   private void loadParameters() {
@@ -61,7 +68,7 @@ public class MapperSpeedHeuristic implements Heuristic<MapReduceApplicationData>
     logger.info(heuristicName + " will use " + DISK_SPEED_SEVERITY + " with the following threshold settings: "
         + Arrays.toString(diskSpeedLimits));
     for (int i = 0; i < diskSpeedLimits.length; i++) {
-      diskSpeedLimits[i] = diskSpeedLimits[i] * HDFSContext.HDFS_BLOCK_SIZE;
+      diskSpeedLimits[i] = diskSpeedLimits[i] * HDFSContext.DISK_READ_SPEED;
     }
 
     double[] confRuntimeThreshold = Utils.getParam(paramMap.get(RUNTIME_SEVERITY), runtimeLimits.length);
@@ -100,8 +107,11 @@ public class MapperSpeedHeuristic implements Heuristic<MapReduceApplicationData>
 
     for (MapReduceTaskData task : tasks) {
 
-      if (task.isSampled()) {
-        long inputBytes = task.getCounters().get(MapReduceCounterData.CounterName.HDFS_BYTES_READ);
+      if (task.isTimeAndCounterDataPresent()) {
+        long inputBytes = 0;
+        for (MapReduceCounterData.CounterName counterName: _counterNames) {
+          inputBytes += task.getCounters().get(counterName);
+        }
         long runtimeMs = task.getTotalRunTimeMs();
         inputByteSizes.add(inputBytes);
         runtimesMs.add(runtimeMs);

@@ -16,26 +16,24 @@
 
 package org.apache.spark.deploy.history
 
+import java.io.InputStream
+import java.util.{Set => JSet, Properties, List => JList, HashSet => JHashSet, ArrayList => JArrayList}
+
+import scala.collection.mutable
 
 import com.linkedin.drelephant.analysis.ApplicationType
-import com.linkedin.drelephant.spark.data._
-import SparkExecutorData.ExecutorInfo
-import SparkJobProgressData.JobInfo
-import org.apache.spark.scheduler.{StageInfo, ApplicationEventListener}
-import org.apache.spark.storage.{StorageStatusTrackingListener, StorageStatus, RDDInfo, StorageStatusListener}
+import com.linkedin.drelephant.spark.legacydata._
+import com.linkedin.drelephant.spark.legacydata.SparkExecutorData.ExecutorInfo
+import com.linkedin.drelephant.spark.legacydata.SparkJobProgressData.JobInfo
+
+import org.apache.spark.SparkConf
+import org.apache.spark.scheduler.{ApplicationEventListener, ReplayListenerBus, StageInfo}
+import org.apache.spark.storage.{RDDInfo, StorageStatus, StorageStatusListener, StorageStatusTrackingListener}
 import org.apache.spark.ui.env.EnvironmentListener
 import org.apache.spark.ui.exec.ExecutorsListener
 import org.apache.spark.ui.jobs.JobProgressListener
 import org.apache.spark.ui.storage.StorageListener
-
-import java.util.{Set => JSet}
-import java.util.{HashSet => JHashSet}
-import java.util.{List => JList}
-import java.util.{ArrayList => JArrayList}
-import java.util.Properties
-
-import scala.collection.mutable
-
+import org.apache.spark.util.collection.OpenHashSet
 
 /**
  * This class wraps the logic of collecting the data in SparkEventListeners into the
@@ -45,22 +43,26 @@ import scala.collection.mutable
  * This has to live in Spark's scope because ApplicationEventListener is in private[spark] scope. And it is problematic
  * to compile if written in Java.
  */
-class SparkDataCollection(applicationEventListener: ApplicationEventListener,
-                          jobProgressListener: JobProgressListener,
-                          storageStatusListener: StorageStatusListener,
-                          environmentListener: EnvironmentListener,
-                          executorsListener: ExecutorsListener,
-                          storageListener: StorageListener,
-                          storageStatusTrackingListener: StorageStatusTrackingListener) extends SparkApplicationData {
+class SparkDataCollection extends SparkApplicationData {
+  import SparkDataCollection._
+
+  lazy val applicationEventListener = new ApplicationEventListener()
+  lazy val jobProgressListener = new JobProgressListener(new SparkConf())
+  lazy val environmentListener = new EnvironmentListener()
+  lazy val storageStatusListener = new StorageStatusListener()
+  lazy val executorsListener = new ExecutorsListener(storageStatusListener)
+  lazy val storageListener = new StorageListener(storageStatusListener)
+
+  // This is a customized listener that tracks peak used memory
+  // The original listener only tracks the current in use memory which is useless in offline scenario.
+  lazy val storageStatusTrackingListener = new StorageStatusTrackingListener()
+
   private var _applicationData: SparkGeneralData = null;
   private var _jobProgressData: SparkJobProgressData = null;
   private var _environmentData: SparkEnvironmentData = null;
   private var _executorData: SparkExecutorData = null;
   private var _storageData: SparkStorageData = null;
   private var _isThrottled: Boolean = false;
-
-  import SparkDataCollection._
-
 
   def throttle(): Unit = {
     _isThrottled = true
@@ -214,7 +216,7 @@ class SparkDataCollection(applicationEventListener: ApplicationEventListener,
         jobInfo.endTime = data.completionTime.getOrElse(0)
 
         data.stageIds.foreach{ case (id: Int) => jobInfo.addStageId(id)}
-        addIntSetToJSet(data.completedStageIndices.asInstanceOf[mutable.HashSet[Int]], jobInfo.completedStageIndices)
+        addIntSetToJSet(data.completedStageIndices, jobInfo.completedStageIndices)
 
         _jobProgressData.addJobInfo(id, jobInfo)
       }
@@ -249,7 +251,7 @@ class SparkDataCollection(applicationEventListener: ApplicationEventListener,
           stageInfo.outputBytes = data.outputBytes
           stageInfo.shuffleReadBytes = data.shuffleReadTotalBytes
           stageInfo.shuffleWriteBytes = data.shuffleWriteBytes
-          addIntSetToJSet(data.completedIndices.asInstanceOf[mutable.HashSet[Int]], stageInfo.completedIndices)
+          addIntSetToJSet(data.completedIndices, stageInfo.completedIndices)
 
           _jobProgressData.addStageInfo(id._1, id._2, stageInfo)
       }
@@ -283,6 +285,18 @@ class SparkDataCollection(applicationEventListener: ApplicationEventListener,
   override def getAppId: String = {
     getGeneralData().getApplicationId
   }
+
+  def load(in: InputStream, sourceName: String): Unit = {
+    val replayBus = new ReplayListenerBus()
+    replayBus.addListener(applicationEventListener)
+    replayBus.addListener(jobProgressListener)
+    replayBus.addListener(environmentListener)
+    replayBus.addListener(storageStatusListener)
+    replayBus.addListener(executorsListener)
+    replayBus.addListener(storageListener)
+    replayBus.addListener(storageStatusTrackingListener)
+    replayBus.replay(in, sourceName, maybeTruncated = false)
+  }
 }
 
 object SparkDataCollection {
@@ -298,6 +312,13 @@ object SparkDataCollection {
     val list = new JArrayList[T]()
     seq.foreach { case (item: T) => list.add(item)}
     list
+  }
+
+  def addIntSetToJSet(set: OpenHashSet[Int], jset: JSet[Integer]): Unit = {
+    val it = set.iterator
+    while (it.hasNext) {
+      jset.add(it.next())
+    }
   }
 
   def addIntSetToJSet(set: mutable.HashSet[Int], jset: JSet[Integer]): Unit = {

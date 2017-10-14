@@ -32,6 +32,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import junit.framework.TestCase;
+import org.apache.commons.io.FileUtils;
 
 
 public class MapperSpeedHeuristicTest extends TestCase {
@@ -39,45 +40,63 @@ public class MapperSpeedHeuristicTest extends TestCase {
   private static Heuristic _heuristic = new MapperSpeedHeuristic(new HeuristicConfigurationData("test_heuristic",
       "test_class", "test_view", new ApplicationType("test_apptype"), paramsMap));
 
-  private static final long UNITSIZE = HDFSContext.HDFS_BLOCK_SIZE / 64;
+  private static final long MB_IN_BYTES = FileUtils.ONE_MB;
   private static final long MINUTE_IN_MS = Statistics.MINUTE_IN_MS;
   private static final int NUMTASKS = 100;
 
   public void testCritical() throws IOException {
-    assertEquals(Severity.CRITICAL, analyzeJob(120 * MINUTE_IN_MS, 10000 * UNITSIZE));
+    long runtime = 120 * MINUTE_IN_MS;
+    long speed_factor = (runtime * MB_IN_BYTES) / 1000;
+    assertEquals(Severity.CRITICAL, analyzeJob(runtime, 1 * speed_factor));
   }
 
   public void testSevere() throws IOException {
-    assertEquals(Severity.SEVERE, analyzeJob(120 * MINUTE_IN_MS, 50000 * UNITSIZE));
+    long runtime = 120 * MINUTE_IN_MS;
+    long speed_factor = (runtime * MB_IN_BYTES) / 1000;
+    assertEquals(Severity.SEVERE, analyzeJob(runtime, 4 * speed_factor));
   }
 
   public void testModerate() throws IOException {
-    assertEquals(Severity.MODERATE, analyzeJob(120 * MINUTE_IN_MS, 100000 * UNITSIZE));
+    long runtime = 120 * MINUTE_IN_MS;
+    long speed_factor = (runtime * MB_IN_BYTES) / 1000;
+    assertEquals(Severity.MODERATE, analyzeJob(runtime, 13 * speed_factor));
   }
 
   public void testLow() throws IOException {
-    assertEquals(Severity.LOW, analyzeJob(120 * MINUTE_IN_MS, 200000 * UNITSIZE));
+    long runtime = 120 * MINUTE_IN_MS;
+    long speed_factor = (runtime * MB_IN_BYTES) / 1000;
+    assertEquals(Severity.LOW, analyzeJob(runtime, 50 * speed_factor));
   }
 
   public void testNone() throws IOException {
-    assertEquals(Severity.NONE, analyzeJob(120 * MINUTE_IN_MS, 500000 * UNITSIZE));
+    long runtime = 120 * MINUTE_IN_MS;
+    long speed_factor = (runtime * MB_IN_BYTES) / 1000;
+    assertEquals(Severity.NONE, analyzeJob(runtime, 51 * speed_factor));
   }
 
   public void testShortTask() throws IOException {
-    assertEquals(Severity.NONE, analyzeJob(2 * MINUTE_IN_MS, 10 * UNITSIZE));
+    long runtime = 2 * MINUTE_IN_MS;
+    long speed_factor = (runtime * MB_IN_BYTES) / 1000;
+    assertEquals(Severity.NONE, analyzeJob(runtime, 1 * speed_factor));
   }
 
   private Severity analyzeJob(long runtimeMs, long readBytes) throws IOException {
     MapReduceCounterData jobCounter = new MapReduceCounterData();
-    MapReduceTaskData[] mappers = new MapReduceTaskData[NUMTASKS];
+    MapReduceTaskData[] mappers = new MapReduceTaskData[NUMTASKS + 1];
 
     MapReduceCounterData counter = new MapReduceCounterData();
-    counter.set(MapReduceCounterData.CounterName.HDFS_BYTES_READ, readBytes);
+    counter.set(MapReduceCounterData.CounterName.HDFS_BYTES_READ, readBytes / 4);
+    counter.set(MapReduceCounterData.CounterName.S3_BYTES_READ, readBytes / 4);
+    counter.set(MapReduceCounterData.CounterName.S3A_BYTES_READ, readBytes / 4);
+    counter.set(MapReduceCounterData.CounterName.S3N_BYTES_READ, readBytes / 4);
 
     int i = 0;
     for (; i < NUMTASKS; i++) {
-      mappers[i] = new MapReduceTaskData(counter, new long[] { runtimeMs, 0, 0 });
+      mappers[i] = new MapReduceTaskData("task-id-"+i, "task-attempt-id-"+i);
+      mappers[i].setTimeAndCounter(new long[] { runtimeMs, 0, 0 ,0, 0}, counter);
     }
+    // Non-sampled task, which does not contain time and counter data
+    mappers[i] = new MapReduceTaskData("task-id-"+i, "task-attempt-id-"+i);
 
     MapReduceApplicationData data = new MapReduceApplicationData().setCounters(jobCounter).setMapperData(mappers);
     HeuristicResult result = _heuristic.apply(data);

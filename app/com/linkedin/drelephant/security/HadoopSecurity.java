@@ -23,7 +23,6 @@ import org.apache.log4j.Logger;
 import java.io.File;
 import java.io.IOException;
 import java.security.PrivilegedAction;
-import play.Play;
 
 
 /**
@@ -38,7 +37,18 @@ public class HadoopSecurity {
   private String _keytabUser;
   private boolean _securityEnabled = false;
 
-  public HadoopSecurity() throws IOException {
+
+  private static HadoopSecurity instance = null;
+
+  public static HadoopSecurity getInstance() throws IOException{
+    if (instance == null) {
+      instance = new HadoopSecurity();
+    }
+
+    return instance;
+  }
+
+  private HadoopSecurity() throws IOException {
     Configuration conf = new Configuration();
     UserGroupInformation.setConfiguration(conf);
     _securityEnabled = UserGroupInformation.isSecurityEnabled();
@@ -46,13 +56,13 @@ public class HadoopSecurity {
       logger.info("This cluster is Kerberos enabled.");
       boolean login = true;
 
-      _keytabUser = Play.application().configuration().getString("keytab.user");
+      _keytabUser = System.getProperty("keytab.user");
       if (_keytabUser == null) {
         logger.error("Keytab user not set. Please set keytab_user in the configuration file");
         login = false;
       }
 
-      _keytabLocation = Play.application().configuration().getString("keytab.location");
+      _keytabLocation = System.getProperty("keytab.location");
       if (_keytabLocation == null) {
         logger.error("Keytab location not set. Please set keytab_location in the configuration file");
         login = false;

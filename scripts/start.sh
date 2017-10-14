@@ -37,10 +37,14 @@ project_root=$script_dir/../
 # User could set an environmental variable, ELEPHANT_CONF_DIR, or pass an optional argument(config file path)
 if [ -z "$1" ]; then
   if [ -z "$ELEPHANT_CONF_DIR" ]; then
-      echo "error: Couldn't find the configuration directory."
-      echo "Please set env variable ELEPHANT_CONF_DIR to the configuration directory or pass the location as an argument."
-      print_usage
-      exit 1
+      if [ -d "${project_root}/app-conf" ]; then
+          ELEPHANT_CONF_DIR=$project_root/app-conf
+      else
+         echo "error: Couldn't find the configuration directory."
+         echo "Please set env variable ELEPHANT_CONF_DIR to the configuration directory or pass the location as an argument."
+         print_usage
+         exit 1
+      fi
   fi
   CONF_DIR="$ELEPHANT_CONF_DIR"
 else
@@ -111,6 +115,22 @@ if [ -n "${application_secret}" ]; then
   OPTS+=" -Dapplication.secret=$application_secret"
 fi
 
+# Enable web analytics if configured
+if [ -n "${enable_analytics}" ]; then
+  OPTS+=" -Denable.analytics=$enable_analytics"
+fi
+
+# Enable Dropwizard metrics if configured
+if [ -n "${metrics}" ]; then
+  OPTS+=" -Dmetrics=$metrics"
+fi
+
+# Enable metrics agent jar if configured. Agent publishes metrics to other apps.
+if [ -n "${metrics_agent_jar}" ]; then
+  OPTS+=" -J$metrics_agent_jar"
+fi
+
+
 # Navigate to project root
 cd $project_root
 
@@ -136,7 +156,7 @@ then
 elif [[ $HADOOP_VERSION == 2* ]];
 then
   JAVA_LIB_PATH=$HADOOP_HOME"/lib/native"
-  echo "This is hadoop2.x grid. Add Java library path: "$JAVA_LIB_PATH
+  echo "This is hadoop2.x grid. Adding Java library to path: "$JAVA_LIB_PATH
 else
   echo "error: Hadoop isn't properly set on this machine. Could you verify cmd 'hadoop version'? "
   exit 1
@@ -146,9 +166,12 @@ OPTS+=" $jvm_args -Djava.library.path=$JAVA_LIB_PATH"
 OPTS+=" -Dhttp.port=$port"
 OPTS+=" -Ddb.default.url=$db_loc -Ddb.default.user=$db_user -Ddb.default.password=$db_password"
 
+# set Java related options (e.g. -Xms1024m -Xmx1024m)
+export JAVA_OPTS="-XX:+HeapDumpOnOutOfMemoryError"
+
 # Start Dr. Elaphant
 echo "Starting Dr. Elephant ...."
-nohup ./bin/dr-elephant ${OPTS} > /dev/null 2>&1 &
+nohup ./bin/dr-elephant ${OPTS} > $project_root/dr.log 2>&1 &
 
 sleep 2
 
